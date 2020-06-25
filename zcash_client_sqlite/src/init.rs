@@ -11,6 +11,53 @@ use crate::{
     HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY,
 };
 
+/// Imports the given viewing key into the account table.
+///
+/// # Examples
+///
+/// ```
+/// use tempfile::NamedTempFile;
+/// use zcash_client_sqlite::init::{init_accounts_table, init_data_database, import_viewing_key};
+/// use zcash_primitives::zip32::{ExtendedFullViewingKey, ExtendedSpendingKey};
+///
+/// let data_file = NamedTempFile::new().unwrap();
+/// let db_data = data_file.path();
+/// init_data_database(&db_data).unwrap();
+///
+/// let extsk = ExtendedSpendingKey::master(&[]);
+/// let extfvks = [ExtendedFullViewingKey::from(&extsk)];
+/// init_accounts_table(&db_data, &extfvks).unwrap();
+/// import_viewing_key(&db_data, &preexisting_extfvk).unwrap();
+/// ```
+///
+/// [`get_address`]: crate::query::get_address
+/// [`scan_cached_blocks`]: crate::scan::scan_cached_blocks
+/// [`create_to_address`]: crate::transact::create_to_address
+pub fn import_viewing_key<P: AsRef<Path>>(
+    db_data: P,
+    extfvk: &ExtendedFullViewingKey,
+) -> Result<u32, Error> {
+    let data = Connection::open(db_data)?;
+//    data.trace(Some(log_sql));
+
+    let count: u32 =
+        data.query_row("SELECT COUNT(account) FROM accounts", NO_PARAMS, |row| {
+            row.get(0).or(Ok(0))
+        })?;
+
+    // Insert accounts atomically
+    data.execute("BEGIN IMMEDIATE", NO_PARAMS)?;
+    let address = address_from_extfvk(extfvk);
+    let extfvk = encode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, extfvk);
+    data.execute(
+        "INSERT INTO accounts (account, extfvk, address) VALUES (?, ?, ?)",
+        &[count.to_sql()?, extfvk.to_sql()?, address.to_sql()?],
+    )?;
+    data.execute("COMMIT", NO_PARAMS)?;
+
+    Ok(count)
+}
+
 /// Sets up the internal structure of the cache database.
 ///
 /// # Examples
