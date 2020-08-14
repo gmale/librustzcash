@@ -23,6 +23,8 @@
 //!
 //! [`CompactBlock`]: zcash_client_backend::proto::compact_formats::CompactBlock
 //! [`init_cache_database`]: crate::init::init_cache_database
+#[macro_use]
+extern crate log;
 
 use rusqlite::{Connection, NO_PARAMS};
 use std::cmp;

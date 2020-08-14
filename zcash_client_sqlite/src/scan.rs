@@ -351,13 +351,20 @@ pub fn scan_cached_blocks<P: AsRef<Path>, Q: AsRef<Path>>(
     Ok(())
 }
 
+pub fn log_sql(msg: &str) {
+//    debug!("{}", msg);
+}
+
 /// Scans a [`Transaction`] for any information that can be decrypted by the accounts in
 /// the wallet, and saves it to the wallet.
 pub fn decrypt_and_store_transaction<P: AsRef<Path>>(
     db_data: P,
     tx: &Transaction,
 ) -> Result<(), Error> {
-    let data = Connection::open(db_data)?;
+    // let data = Connection::open(db_data)?;
+
+    let mut data = Connection::open(db_data)?;
+    data.trace(Some(log_sql));
 
     // Fetch the ExtendedFullViewingKeys we are tracking
     let mut stmt_fetch_accounts =
