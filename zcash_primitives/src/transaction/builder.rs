@@ -870,7 +870,7 @@ mod tests {
         primitives::Rseed,
         prover::mock::MockTxProver,
         sapling::Node,
-        transaction::components::Amount,
+        transaction::components::{amount::Amount, amount::DEFAULT_FEE},
         zip32::{ExtendedFullViewingKey, ExtendedSpendingKey},
     };
 
@@ -990,7 +990,9 @@ mod tests {
             let builder = Builder::new(TEST_NETWORK, H0);
             assert_eq!(
                 builder.build(consensus::BranchId::Sapling, &MockTxProver),
-                Err(Error::ChangeIsNegative(Amount::from_i64(-10000).unwrap()))
+                Err(Error::ChangeIsNegative(
+                    Amount::from_i64(-1 * DEFAULT_FEE).unwrap()
+                ))
             );
         }
 
