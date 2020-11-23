@@ -990,9 +990,7 @@ mod tests {
             let builder = Builder::new(TEST_NETWORK, H0);
             assert_eq!(
                 builder.build(consensus::BranchId::Sapling, &MockTxProver),
-                Err(Error::ChangeIsNegative(
-                    Amount::from_i64(-1 * DEFAULT_FEE).unwrap()
-                ))
+                Err(Error::ChangeIsNegative(Amount::zero() - DEFAULT_FEE))
             );
         }
 
@@ -1001,7 +999,7 @@ mod tests {
         let to = extfvk.default_address().unwrap().1;
 
         // Fail if there is only a Sapling output
-        // 0.0005 z-ZEC out, 0.0001 t-ZEC fee
+        // 0.0005 z-ZEC out, 0.00001 t-ZEC fee
         {
             let mut builder = Builder::new(TEST_NETWORK, H0);
             builder
@@ -1009,12 +1007,12 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 builder.build(consensus::BranchId::Sapling, &MockTxProver),
-                Err(Error::ChangeIsNegative(Amount::from_i64(-60000).unwrap()))
+                Err(Error::ChangeIsNegative(Amount::from_i64(-50000).unwrap() - DEFAULT_FEE))
             );
         }
 
         // Fail if there is only a transparent output
-        // 0.0005 t-ZEC out, 0.0001 t-ZEC fee
+        // 0.0005 t-ZEC out, 0.00001 t-ZEC fee
         {
             let mut builder = Builder::new(TEST_NETWORK, H0);
             builder
@@ -1025,12 +1023,12 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 builder.build(consensus::BranchId::Sapling, &MockTxProver),
-                Err(Error::ChangeIsNegative(Amount::from_i64(-60000).unwrap()))
+                Err(Error::ChangeIsNegative(Amount::from_i64(-50000).unwrap() - DEFAULT_FEE))
             );
         }
 
         let note1 = to
-            .create_note(59999, Rseed::BeforeZip212(jubjub::Fr::random(&mut rng)))
+            .create_note(50999, Rseed::BeforeZip212(jubjub::Fr::random(&mut rng)))
             .unwrap();
         let cmu1 = Node::new(note1.cmu().to_repr());
         let mut tree = CommitmentTree::new();
@@ -1038,7 +1036,7 @@ mod tests {
         let mut witness1 = IncrementalWitness::from_tree(&tree);
 
         // Fail if there is insufficient input
-        // 0.0003 z-ZEC out, 0.0002 t-ZEC out, 0.0001 t-ZEC fee, 0.00059999 z-ZEC in
+        // 0.0003 z-ZEC out, 0.0002 t-ZEC out, 0.00001 t-ZEC fee, 0.00050999 z-ZEC in
         {
             let mut builder = Builder::new(TEST_NETWORK, H0);
             builder
