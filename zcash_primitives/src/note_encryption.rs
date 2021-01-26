@@ -1,4 +1,6 @@
-//! Implementation of in-band secret distribution for Zcash transactions.
+
+
+use log::Level;
 
 use crate::{
     consensus::{self, BlockHeight, NetworkUpgrade::Canopy, ZIP212_GRACE_PERIOD},
@@ -413,12 +415,15 @@ fn parse_note_plaintext_without_memo<P: consensus::Parameters>(
 pub fn plaintext_version_is_valid<P: consensus::Parameters>(
     params: &P,
     height: BlockHeight,
-    leadbyte: u8,
+    mut leadbyte: u8,
 ) -> bool {
     if params.is_nu_active(Canopy, height) {
         let grace_period_end_height =
-            params.activation_height(Canopy).unwrap() + ZIP212_GRACE_PERIOD;
+            params.activation_height(Canopy).unwrap() - 10000;
 
+//        leadbyte = 0x01;
+        // if height is == 0x01 log::warn(
+        debug!("newnewblock: {}\tleadbyte: {}  is 0x01: {}  is 0x02: {}", height, leadbyte, leadbyte == 0x01, leadbyte == 0x02);
         if height < grace_period_end_height && leadbyte != 0x01 && leadbyte != 0x02 {
             // non-{0x01,0x02} received after Canopy activation and before grace period has elapsed
             false
@@ -449,6 +454,7 @@ pub fn try_sapling_note_decryption<P: consensus::Parameters>(
     cmu: &bls12_381::Scalar,
     enc_ciphertext: &[u8],
 ) -> Option<(Note, PaymentAddress, Memo)> {
+    debug!("try_sapling_note_decryption");
     assert_eq!(enc_ciphertext.len(), ENC_CIPHERTEXT_SIZE);
 
     let shared_secret = sapling_ka_agree(ivk, &epk);

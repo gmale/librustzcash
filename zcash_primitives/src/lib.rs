@@ -6,6 +6,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Catch documentation errors caused by code changes.
 #![deny(intra_doc_link_resolution_failure)]
+#[macro_use]
+extern crate log;
 
 pub mod block;
 pub mod consensus;

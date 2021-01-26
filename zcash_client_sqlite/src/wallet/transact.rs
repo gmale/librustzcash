@@ -1,5 +1,9 @@
 //! Functions for creating transactions.
 //!
+//!
+
+use log::Level;
+
 use rusqlite::named_params;
 use std::convert::TryInto;
 
@@ -25,6 +29,7 @@ pub fn select_spendable_notes(
     target_value: Amount,
     anchor_height: BlockHeight,
 ) -> Result<Vec<SpendableNote>, SqliteClientError> {
+debug!("CREATING-TX:  select_spendable_notes [START]");
     // The goal of this SQL statement is to select the oldest notes until the required
     // value has been reached, and then fetch the witnesses at the desired height for the
     // selected notes. This is achieved in several steps:
@@ -117,6 +122,7 @@ pub fn select_spendable_notes(
     )?;
 
     let notes: Vec<SpendableNote> = notes.collect::<Result<_, _>>()?;
+    debug!("CREATING-TX:  select_spendable_notes [END]");
     Ok(notes)
 }
 

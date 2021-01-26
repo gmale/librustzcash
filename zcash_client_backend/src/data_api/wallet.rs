@@ -1,4 +1,8 @@
 //! Functions for scanning the chain and extracting relevant information.
+//!
+
+use log::Level;
+
 use std::fmt::Debug;
 
 use zcash_primitives::{
@@ -160,60 +164,70 @@ where
     R: Copy + Debug,
     &'db D: WalletRead<Error = E0, TxRef = R>,
 {
+debug!("CREATING-TX:  create_spend_to_address [START]");
     // Check that the ExtendedSpendingKey we have been given corresponds to the
     // ExtendedFullViewingKey for the account we are spending from.
     let extfvk = ExtendedFullViewingKey::from(extsk);
+debug!("CREATING-TX:  create_spend_to_address [01]");
     if !data
         .is_valid_account_extfvk(params, account, &extfvk)
         .map_err(|e| e.into())?
     {
+        debug!("CREATING-TX:  create_spend_to_address [02]");
         return Err(Error::InvalidExtSK(account));
     }
-
+debug!("CREATING-TX:  create_spend_to_address [03]");
     // Apply the outgoing viewing key policy.
     let ovk = match ovk_policy {
         OvkPolicy::Sender => Some(extfvk.fvk.ovk),
         OvkPolicy::Custom(ovk) => Some(ovk),
         OvkPolicy::Discard => None,
     };
-
+debug!("CREATING-TX:  create_spend_to_address [04]");
     // Target the next block, assuming we are up-to-date.
     let (height, anchor_height) = data
         .get_target_and_anchor_heights()
         .map_err(|e| e.into())
         .and_then(|x| x.ok_or(Error::ScanRequired))?;
-
+debug!("CREATING-TX:  create_spend_to_address [05]");
     let target_value = value + DEFAULT_FEE;
     let spendable_notes = data
         .select_spendable_notes(account, target_value, anchor_height)
         .map_err(|e| e.into())?;
-
+debug!("CREATING-TX:  create_spend_to_address [06]");
     // Confirm we were able to select sufficient value
     let selected_value = spendable_notes.iter().map(|n| n.note_value).sum();
+debug!("CREATING-TX:  create_spend_to_address [07]");
     if selected_value < target_value {
         return Err(Error::InsufficientBalance(selected_value, target_value));
     }
-
+debug!("CREATING-TX:  create_spend_to_address [08]");
     // Create the transaction
     let mut builder = Builder::new(params.clone(), height);
+debug!("CREATING-TX:  create_spend_to_address [09]");
     for selected in spendable_notes {
+debug!("CREATING-TX:  create_spend_to_address [09a]");
         let from = extfvk
             .fvk
             .vk
             .to_payment_address(selected.diversifier)
             .unwrap(); //JUBJUB would have to unexpectedly be the zero point for this to be None
+debug!("CREATING-TX:  create_spend_to_address [09b]");
 
         let note = from
             .create_note(u64::from(selected.note_value), selected.rseed)
             .unwrap();
+debug!("CREATING-TX:  create_spend_to_address [09c]");
 
         let merkle_path = selected.witness.path().expect("the tree is not empty");
+debug!("CREATING-TX:  create_spend_to_address [09e]");
 
         builder
             .add_sapling_spend(extsk.clone(), selected.diversifier, note, merkle_path)
             .map_err(Error::Builder)?;
+debug!("CREATING-TX:  create_spend_to_address [09f]");
     }
-
+debug!("CREATING-TX:  create_spend_to_address [10]");
     match to {
         RecipientAddress::Shielded(to) => {
             builder.add_sapling_output(ovk, to.clone(), value, memo.clone())
@@ -222,19 +236,24 @@ where
         RecipientAddress::Transparent(to) => builder.add_transparent_output(&to, value),
     }?;
 
+debug!("CREATING-TX:  create_spend_to_address [11]");
     let consensus_branch_id = BranchId::for_height(params, height);
+debug!("CREATING-TX:  create_spend_to_address [12]");
     let (tx, tx_metadata) = builder
         .build(consensus_branch_id, &prover)
         .map_err(Error::Builder)?;
 
+debug!("CREATING-TX:  create_spend_to_address [13]");
     // We only called add_sapling_output() once.
     let output_index = match tx_metadata.output_index(0) {
         Some(idx) => idx as i64,
         None => panic!("Output 0 should exist in the transaction"),
     };
 
+debug!("CREATING-TX:  create_spend_to_address [14]");
     // Update the database atomically, to ensure the result is internally consistent.
     let mut db_update = data.get_update_ops().map_err(|e| e.into())?;
+debug!("CREATING-TX:  create_spend_to_address [END]");
     db_update
         .transactionally(|up| {
             let created = time::OffsetDateTime::now_utc();

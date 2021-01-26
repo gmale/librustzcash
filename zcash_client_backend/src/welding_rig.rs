@@ -1,4 +1,5 @@
 //! Tools for scanning a compact representation of the Zcash block chain.
+use log::Level;
 
 use ff::PrimeField;
 use std::collections::HashSet;
@@ -33,6 +34,7 @@ fn scan_output<P: consensus::Parameters>(
     block_witnesses: &mut [&mut IncrementalWitness<Node>],
     new_witnesses: &mut [&mut IncrementalWitness<Node>],
 ) -> Option<WalletShieldedOutput> {
+    debug!("scan_output");
     let cmu = output.cmu().ok()?;
     let epk = output.epk().ok()?;
     let ct = output.ciphertext;
@@ -94,6 +96,7 @@ pub fn scan_block<P: consensus::Parameters>(
     tree: &mut CommitmentTree<Node>,
     existing_witnesses: &mut [&mut IncrementalWitness<Node>],
 ) -> Vec<WalletTx> {
+    debug!("scan_block");
     let mut wtxs: Vec<WalletTx> = vec![];
     let ivks: Vec<_> = extfvks.iter().map(|extfvk| extfvk.fvk.vk.ivk()).collect();
     let block_height = block.height();
