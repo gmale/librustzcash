@@ -4,12 +4,18 @@
 use subtle::{Choice, ConditionallySelectable};
 
 use zcash_primitives::{
+    consensus::BlockHeight,
     keys::OutgoingViewingKey,
     merkle_tree::IncrementalWitness,
     primitives::{Diversifier, Note, Nullifier, PaymentAddress, Rseed},
     sapling::Node,
     transaction::{components::Amount, TxId},
 };
+
+use crate::{
+    address::RecipientAddress
+};
+    
 
 /// A type-safe wrapper for account identifiers.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -37,6 +43,15 @@ pub struct WalletTx {
     pub num_outputs: usize,
     pub shielded_spends: Vec<WalletShieldedSpend>,
     pub shielded_outputs: Vec<WalletShieldedOutput>,
+}
+
+pub struct WalletTransparentOutput {
+    pub address: RecipientAddress,
+    pub txid: TxId,
+    pub index: i32, 
+    pub script: Vec<u8>,
+    pub value: Amount,
+    pub height: BlockHeight,
 }
 
 /// A subset of a [`SpendDescription`] relevant to wallets and light clients.

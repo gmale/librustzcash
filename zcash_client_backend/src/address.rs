@@ -46,11 +46,12 @@ impl RecipientAddress {
             RecipientAddress::Shielded(pa) => {
                 encode_payment_address(params.hrp_sapling_payment_address(), pa)
             }
-            RecipientAddress::Transparent(addr) => encode_transparent_address(
-                &params.b58_pubkey_address_prefix(),
-                &params.b58_script_address_prefix(),
-                addr,
-            ),
+            RecipientAddress::Transparent(addr) => 
+                encode_transparent_address(
+                    &params.b58_pubkey_address_prefix(),
+                    &params.b58_script_address_prefix(),
+                    addr,
+                )
         }
     }
 }

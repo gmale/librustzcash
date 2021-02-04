@@ -4,42 +4,41 @@ use protobuf::Message;
 use rusqlite::{params};
 
 use zcash_primitives::{
+    legacy::TransparentAddress,
     transaction::{components::Amount, TxId},
     consensus::{self, BlockHeight},
 };
 
 use zcash_client_backend::{
     data_api::error::Error, 
+    encoding::encode_transparent_address,
     proto::compact_formats::CompactBlock,
     address::RecipientAddress,
-    };
+    wallet::WalletTransparentOutput,
+};
 
 use crate::{error::SqliteClientError, BlockDB};
 
 pub mod init;
 
-
-pub struct UnspentTransactionOutput {
-    pub address: RecipientAddress,
-    pub txid: TxId,
-    pub index: i32, 
-    pub script: Vec<u8>,
-    pub value: Amount,
-    pub height: BlockHeight,
-}
-
 pub fn get_confirmed_utxos_for_address<P: consensus::Parameters>(
     params: &P,
     cache: &BlockDB,
     anchor_height: BlockHeight,
-    address: &str 
-) -> Result<Vec<UnspentTransactionOutput>,SqliteClientError> {
+    address: &TransparentAddress
+) -> Result<Vec<WalletTransparentOutput>,SqliteClientError> {
     let mut stmt_blocks = cache.0.prepare(
         "SELECT address, txid, idx, script, value_zat, height FROM utxos WHERE address = ? AND height <= ?",
     )?;
 
+    let addr_str = encode_transparent_address(
+        &params.b58_pubkey_address_prefix(),
+        &params.b58_script_address_prefix(),
+        address,
+    );
+
     let rows = stmt_blocks.query_map(
-        params![address, u32::from(anchor_height)],
+        params![addr_str, u32::from(anchor_height)],
         |row| {
             let addr: String = row.get(0)?;
             let address = RecipientAddress::decode(params, &addr)
@@ -56,7 +55,7 @@ pub fn get_confirmed_utxos_for_address<P: consensus::Parameters>(
             let value: i64 = row.get(4)?;
             let height: u32 = row.get(5)?;
 
-            Ok(UnspentTransactionOutput{
+            Ok(WalletTransparentOutput{
                 address: address,
                 txid: txid,
                 index: index,
@@ -67,7 +66,7 @@ pub fn get_confirmed_utxos_for_address<P: consensus::Parameters>(
         },
     )?;
 
-    let mut utxos = Vec::<UnspentTransactionOutput>::new();
+    let mut utxos = Vec::<WalletTransparentOutput>::new();
 
     for utxo in rows {
         utxos.push(utxo.unwrap())

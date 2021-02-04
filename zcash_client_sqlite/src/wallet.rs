@@ -474,7 +474,7 @@ pub fn put_tx_meta<'a, P>(
             .stmt_insert_tx_meta
             .execute(params![txid, u32::from(height), (tx.index as i64),])?;
 
-        Ok(stmts.wallet_db.conn.last_insert_rowid())
+        Ok(stmts.data_db.wallet_db.conn.last_insert_rowid())
     } else {
         // It was there, so grab its row number.
         stmts
@@ -507,7 +507,7 @@ pub fn put_tx_data<'a, P>(
             raw_tx
         ])?;
 
-        Ok(stmts.wallet_db.conn.last_insert_rowid())
+        Ok(stmts.data_db.wallet_db.conn.last_insert_rowid())
     } else {
         // It was there, so grab its row number.
         stmts
@@ -565,7 +565,7 @@ pub fn put_received_note<'a, P, T: ShieldedOutput>(
         // It isn't there, so insert our note into the database.
         stmts.stmt_insert_received_note.execute_named(&sql_args)?;
 
-        Ok(NoteId::ReceivedNoteId(stmts.wallet_db.conn.last_insert_rowid()))
+        Ok(NoteId::ReceivedNoteId(stmts.data_db.wallet_db.conn.last_insert_rowid()))
     } else {
         // It was there, so grab its row number.
         stmts
@@ -620,7 +620,7 @@ pub fn put_sent_note<'a, P: consensus::Parameters>(
     let account = output.account.0 as i64;
     let value = output.note.value as i64;
     let to_str = encode_payment_address(
-        stmts.wallet_db.params.hrp_sapling_payment_address(),
+        stmts.data_db.wallet_db.params.hrp_sapling_payment_address(),
         &output.to,
     );
 
@@ -659,7 +659,7 @@ pub fn insert_sent_note<'a, P: consensus::Parameters>(
     value: Amount,
     memo: Option<Memo>,
 ) -> Result<(), SqliteClientError> {
-    let to_str = to.encode(&stmts.wallet_db.params);
+    let to_str = to.encode(&stmts.data_db.wallet_db.params);
     let ivalue: i64 = value.into();
     stmts.stmt_insert_sent_note.execute(params![
         tx_ref,

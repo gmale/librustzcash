@@ -7,6 +7,7 @@ use std::fmt::Debug;
 use zcash_primitives::{
     block::BlockHash,
     consensus::BlockHeight,
+    legacy::TransparentAddress,
     merkle_tree::{CommitmentTree, IncrementalWitness},
     note_encryption::Memo,
     primitives::{Note, Nullifier, PaymentAddress},
@@ -20,7 +21,7 @@ use crate::{
     data_api::wallet::ANCHOR_OFFSET,
     decrypt::DecryptedOutput,
     proto::compact_formats::CompactBlock,
-    wallet::{AccountId, SpendableNote, WalletShieldedOutput, WalletTx},
+    wallet::{AccountId, SpendableNote, WalletTransparentOutput, WalletShieldedOutput, WalletTx},
 };
 
 pub mod chain;
@@ -177,6 +178,12 @@ pub trait WalletRead {
         target_value: Amount,
         anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error>;
+
+    fn get_confirmed_utxos_for_address(
+        &self,
+        anchor_height: BlockHeight,
+        address: &TransparentAddress
+    ) -> Result<Vec<WalletTransparentOutput>, Self::Error>;
 }
 
 /// This trait encapsulates the write capabilities required to update stored
