@@ -4,9 +4,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::io::{self, Read, Write};
 use std::ops::Shl;
 
-use crate::{
-    serialize::Vector,
-};
+use crate::serialize::Vector;
 
 /// Minimal subset of script opcodes.
 enum OpCode {

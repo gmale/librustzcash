@@ -12,7 +12,10 @@ use zcash_primitives::{
     note_encryption::Memo,
     primitives::{Note, Nullifier, PaymentAddress},
     sapling::Node,
-    transaction::{components::Amount, Transaction, TxId},
+    transaction::{
+        components::{Amount, OutPoint},
+        Transaction, TxId,
+    },
     zip32::ExtendedFullViewingKey,
 };
 
@@ -21,7 +24,7 @@ use crate::{
     data_api::wallet::ANCHOR_OFFSET,
     decrypt::DecryptedOutput,
     proto::compact_formats::CompactBlock,
-    wallet::{AccountId, SpendableNote, WalletTransparentOutput, WalletShieldedOutput, WalletTx},
+    wallet::{AccountId, SpendableNote, WalletShieldedOutput, WalletTransparentOutput, WalletTx},
 };
 
 pub mod chain;
@@ -142,10 +145,7 @@ pub trait WalletRead {
     ///
     /// This will return `Ok(None)` if the note identifier does not appear in the
     /// database as a known note ID.
-    fn get_memo_as_utf8(
-        &self,
-        id_note: Self::NoteRef,
-    ) -> Result<Option<String>, Self::Error>;
+    fn get_memo_as_utf8(&self, id_note: Self::NoteRef) -> Result<Option<String>, Self::Error>;
 
     /// Returns the note commitment tree at the specified block height.
     fn get_commitment_tree(
@@ -164,7 +164,7 @@ pub trait WalletRead {
     fn get_nullifiers(&self) -> Result<Vec<(AccountId, Nullifier)>, Self::Error>;
 
     /// Return all spendable notes.
-    fn get_spendable_notes(
+    fn get_spendable_sapling_notes(
         &self,
         account: AccountId,
         anchor_height: BlockHeight,
@@ -172,17 +172,17 @@ pub trait WalletRead {
 
     /// Returns a list of spendable notes sufficient to cover the specified
     /// target value, if possible.
-    fn select_spendable_notes(
+    fn select_spendable_sapling_notes(
         &self,
         account: AccountId,
         target_value: Amount,
         anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error>;
 
-    fn get_confirmed_utxos_for_address(
+    fn get_spendable_transparent_utxos(
         &self,
         anchor_height: BlockHeight,
-        address: &TransparentAddress
+        address: &TransparentAddress,
     ) -> Result<Vec<WalletTransparentOutput>, Self::Error>;
 }
 
@@ -238,7 +238,18 @@ pub trait WalletWrite: WalletRead {
     ) -> Result<Self::TxRef, Self::Error>;
 
     /// Mark the specified transaction as spent and record the nullifier.
-    fn mark_spent(&mut self, tx_ref: Self::TxRef, nf: &Nullifier) -> Result<(), Self::Error>;
+    fn mark_transparent_utxo_spent(
+        &mut self,
+        tx_ref: Self::TxRef,
+        outpoint: &OutPoint,
+    ) -> Result<(), Self::Error>;
+
+    /// Mark the specified transaction as spent and record the nullifier.
+    fn mark_sapling_note_spent(
+        &mut self,
+        tx_ref: Self::TxRef,
+        nf: &Nullifier,
+    ) -> Result<(), Self::Error>;
 
     /// Record a note as having been received, along with its nullifier and the transaction
     /// within which the note was created.
@@ -377,11 +388,15 @@ pub mod testing {
     use zcash_primitives::{
         block::BlockHash,
         consensus::BlockHeight,
+        legacy::TransparentAddress,
         merkle_tree::{CommitmentTree, IncrementalWitness},
         note_encryption::Memo,
         primitives::{Nullifier, PaymentAddress},
         sapling::Node,
-        transaction::{components::Amount, Transaction, TxId},
+        transaction::{
+            components::{Amount, OutPoint},
+            Transaction, TxId,
+        },
         zip32::ExtendedFullViewingKey,
     };
 
@@ -389,7 +404,7 @@ pub mod testing {
         address::RecipientAddress,
         decrypt::DecryptedOutput,
         proto::compact_formats::CompactBlock,
-        wallet::{AccountId, SpendableNote, WalletTx},
+        wallet::{AccountId, SpendableNote, WalletTransparentOutput, WalletTx},
     };
 
     use super::{error::Error, BlockSource, ShieldedOutput, WalletRead, WalletWrite};
@@ -460,10 +475,7 @@ pub mod testing {
             Ok(Amount::zero())
         }
 
-        fn get_memo_as_utf8(
-            &self,
-            _id_note: Self::NoteRef,
-        ) -> Result<Option<String>, Self::Error> {
+        fn get_memo_as_utf8(&self, _id_note: Self::NoteRef) -> Result<Option<String>, Self::Error> {
             Ok(None)
         }
 
@@ -485,7 +497,7 @@ pub mod testing {
             Ok(Vec::new())
         }
 
-        fn get_spendable_notes(
+        fn get_spendable_sapling_notes(
             &self,
             _account: AccountId,
             _anchor_height: BlockHeight,
@@ -493,12 +505,20 @@ pub mod testing {
             Ok(Vec::new())
         }
 
-        fn select_spendable_notes(
+        fn select_spendable_sapling_notes(
             &self,
             _account: AccountId,
             _target_value: Amount,
             _anchor_height: BlockHeight,
         ) -> Result<Vec<SpendableNote>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        fn get_spendable_transparent_utxos(
+            &self,
+            _anchor_height: BlockHeight,
+            _address: &TransparentAddress,
+        ) -> Result<Vec<WalletTransparentOutput>, Self::Error> {
             Ok(Vec::new())
         }
     }
@@ -541,7 +561,19 @@ pub mod testing {
             Ok(TxId([0u8; 32]))
         }
 
-        fn mark_spent(&mut self, _tx_ref: Self::TxRef, _nf: &Nullifier) -> Result<(), Self::Error> {
+        fn mark_transparent_utxo_spent(
+            &mut self,
+            _tx_ref: Self::TxRef,
+            _out: &OutPoint,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn mark_sapling_note_spent(
+            &mut self,
+            _tx_ref: Self::TxRef,
+            _nf: &Nullifier,
+        ) -> Result<(), Self::Error> {
             Ok(())
         }
 

@@ -38,7 +38,10 @@ use zcash_primitives::{
     note_encryption::Memo,
     primitives::{Nullifier, PaymentAddress},
     sapling::Node,
-    transaction::{components::Amount, Transaction, TxId},
+    transaction::{
+        components::{Amount, OutPoint},
+        Transaction, TxId,
+    },
     zip32::ExtendedFullViewingKey,
 };
 
@@ -47,7 +50,7 @@ use zcash_client_backend::{
     data_api::{BlockSource, ShieldedOutput, WalletRead, WalletWrite},
     encoding::encode_payment_address,
     proto::compact_formats::CompactBlock,
-    wallet::{AccountId, SpendableNote, WalletTx, WalletTransparentOutput},
+    wallet::{AccountId, SpendableNote, WalletTransparentOutput, WalletTx},
     DecryptedOutput,
 };
 
@@ -74,6 +77,11 @@ impl fmt::Display for NoteId {
     }
 }
 
+/// A newtype wrapper for sqlite primary key values for the utxos
+/// table.
+#[derive(Debug, Copy, Clone)]
+pub struct UtxoId(i64);
+
 /// A wrapper for the sqlite connection to the wallet database.
 pub struct WalletDB<P> {
     conn: Connection,
@@ -87,50 +95,54 @@ impl<P: consensus::Parameters> WalletDB<P> {
     }
 }
 
-pub struct DataDB<P> {
-    wallet_db: WalletDB<P>,
-    block_db: BlockDB,
-}
-
-impl<P: consensus::Parameters> DataDB<P> {
+impl<P: consensus::Parameters> WalletDB<P> {
     /// Given a wallet database connection, obtain a handle for the write operations
     /// for that database. This operation may eagerly initialize and cache sqlite
     /// prepared statements that are used in write operations.
     pub fn get_update_ops<'a>(&'a self) -> Result<DataConnStmtCache<'a, P>, SqliteClientError> {
         Ok(
             DataConnStmtCache {
-                data_db: self,
-                stmt_insert_block: self.wallet_db.conn.prepare(
+                wallet_db: self,
+                stmt_insert_block: self.conn.prepare(
                     "INSERT INTO blocks (height, hash, time, sapling_tree)
                     VALUES (?, ?, ?, ?)",
                 )?,
-                stmt_insert_tx_meta: self.wallet_db.conn.prepare(
+                stmt_insert_tx_meta: self.conn.prepare(
                     "INSERT INTO transactions (txid, block, tx_index)
                     VALUES (?, ?, ?)",
                 )?,
-                stmt_update_tx_meta: self.wallet_db.conn.prepare(
+                stmt_update_tx_meta: self.conn.prepare(
                     "UPDATE transactions
                     SET block = ?, tx_index = ? WHERE txid = ?",
                 )?,
-                stmt_insert_tx_data: self.wallet_db.conn.prepare(
+                stmt_insert_tx_data: self.conn.prepare(
                     "INSERT INTO transactions (txid, created, expiry_height, raw)
                     VALUES (?, ?, ?, ?)",
                 )?,
-                stmt_update_tx_data: self.wallet_db.conn.prepare(
+                stmt_update_tx_data: self.conn.prepare(
                     "UPDATE transactions
                     SET expiry_height = ?, raw = ? WHERE txid = ?",
                 )?,
-                stmt_select_tx_ref: self.wallet_db.conn.prepare(
+                stmt_select_tx_ref: self.conn.prepare(
                     "SELECT id_tx FROM transactions WHERE txid = ?",
                 )?,
-                stmt_mark_recived_note_spent: self.wallet_db.conn.prepare(
+                stmt_mark_sapling_note_spent: self.conn.prepare(
                     "UPDATE received_notes SET spent = ? WHERE nf = ?"
                 )?,
-                stmt_insert_received_note: self.wallet_db.conn.prepare(
+                stmt_mark_transparent_utxo_spent: self.conn.prepare(
+                    "UPDATE utxos SET spent_in_tx = :spent_in_tx
+                    WHERE prevout_txid = :prevout_txid
+                    AND prevout_idx = :prevout_idx"
+                )?,
+                stmt_insert_received_transparent_utxo: self.conn.prepare(
+                    "INSERT INTO utxos (address, prevout_txid, prevout_idx, script, value_zat, height)
+                    VALUES (:address, :txid, :prevout_idx, :script, :value, :height)"
+                )?,
+                stmt_insert_received_note: self.conn.prepare(
                     "INSERT INTO received_notes (tx, output_index, account, diversifier, value, rcm, memo, nf, is_change)
                     VALUES (:tx, :output_index, :account, :diversifier, :value, :rcm, :memo, :nf, :is_change)",
                 )?,
-                stmt_update_received_note: self.wallet_db.conn.prepare(
+                stmt_update_received_note: self.conn.prepare(
                     "UPDATE received_notes
                     SET account = :account,
                         diversifier = :diversifier,
@@ -141,26 +153,26 @@ impl<P: consensus::Parameters> DataDB<P> {
                         is_change = IFNULL(:is_change, is_change)
                     WHERE tx = :tx AND output_index = :output_index",
                 )?,
-                stmt_select_received_note: self.wallet_db.conn.prepare(
+                stmt_select_received_note: self.conn.prepare(
                     "SELECT id_note FROM received_notes WHERE tx = ? AND output_index = ?"
                 )?,
-                stmt_update_sent_note: self.wallet_db.conn.prepare(
+                stmt_update_sent_note: self.conn.prepare(
                     "UPDATE sent_notes
                     SET from_account = ?, address = ?, value = ?, memo = ?
                     WHERE tx = ? AND output_index = ?",
                 )?,
-                stmt_insert_sent_note: self.wallet_db.conn.prepare(
+                stmt_insert_sent_note: self.conn.prepare(
                     "INSERT INTO sent_notes (tx, output_index, from_account, address, value, memo)
                     VALUES (?, ?, ?, ?, ?, ?)",
                 )?,
-                stmt_insert_witness: self.wallet_db.conn.prepare(
+                stmt_insert_witness: self.conn.prepare(
                     "INSERT INTO sapling_witnesses (note, block, witness)
                     VALUES (?, ?, ?)",
                 )?,
-                stmt_prune_witnesses: self.wallet_db.conn.prepare(
+                stmt_prune_witnesses: self.conn.prepare(
                     "DELETE FROM sapling_witnesses WHERE block < ?"
                 )?,
-                stmt_update_expired: self.wallet_db.conn.prepare(
+                stmt_update_expired: self.conn.prepare(
                     "UPDATE received_notes SET spent = NULL WHERE EXISTS (
                         SELECT id_tx FROM transactions
                         WHERE id_tx = received_notes.spent AND block IS NULL AND expiry_height < ?
@@ -171,31 +183,31 @@ impl<P: consensus::Parameters> DataDB<P> {
     }
 }
 
-impl<P: consensus::Parameters> WalletRead for DataDB<P> {
+impl<P: consensus::Parameters> WalletRead for WalletDB<P> {
     type Error = SqliteClientError;
     type NoteRef = NoteId;
     type TxRef = i64;
 
     fn block_height_extrema(&self) -> Result<Option<(BlockHeight, BlockHeight)>, Self::Error> {
-        wallet::block_height_extrema(&self.wallet_db).map_err(SqliteClientError::from)
+        wallet::block_height_extrema(&self).map_err(SqliteClientError::from)
     }
 
     fn get_block_hash(&self, block_height: BlockHeight) -> Result<Option<BlockHash>, Self::Error> {
-        wallet::get_block_hash(&self.wallet_db, block_height).map_err(SqliteClientError::from)
+        wallet::get_block_hash(&self, block_height).map_err(SqliteClientError::from)
     }
 
     fn get_tx_height(&self, txid: TxId) -> Result<Option<BlockHeight>, Self::Error> {
-        wallet::get_tx_height(&self.wallet_db, txid).map_err(SqliteClientError::from)
+        wallet::get_tx_height(&self, txid).map_err(SqliteClientError::from)
     }
 
     fn get_extended_full_viewing_keys(
         &self,
     ) -> Result<HashMap<AccountId, ExtendedFullViewingKey>, Self::Error> {
-        wallet::get_extended_full_viewing_keys(&self.wallet_db)
+        wallet::get_extended_full_viewing_keys(&self)
     }
 
     fn get_address(&self, account: AccountId) -> Result<Option<PaymentAddress>, Self::Error> {
-        wallet::get_address(&self.wallet_db, account)
+        wallet::get_address(&self, account)
     }
 
     fn is_valid_account_extfvk(
@@ -203,7 +215,7 @@ impl<P: consensus::Parameters> WalletRead for DataDB<P> {
         account: AccountId,
         extfvk: &ExtendedFullViewingKey,
     ) -> Result<bool, Self::Error> {
-        wallet::is_valid_account_extfvk(&self.wallet_db, account, extfvk)
+        wallet::is_valid_account_extfvk(&self, account, extfvk)
     }
 
     fn get_balance_at(
@@ -211,13 +223,13 @@ impl<P: consensus::Parameters> WalletRead for DataDB<P> {
         account: AccountId,
         anchor_height: BlockHeight,
     ) -> Result<Amount, Self::Error> {
-        wallet::get_balance_at(&self.wallet_db, account, anchor_height)
+        wallet::get_balance_at(&self, account, anchor_height)
     }
 
     fn get_memo_as_utf8(&self, id_note: Self::NoteRef) -> Result<Option<String>, Self::Error> {
         match id_note {
-            NoteId::SentNoteId(id_note) => wallet::get_sent_memo_as_utf8(&self.wallet_db, id_note),
-            NoteId::ReceivedNoteId(id_note) => wallet::get_received_memo_as_utf8(&self.wallet_db, id_note),
+            NoteId::SentNoteId(id_note) => wallet::get_sent_memo_as_utf8(&self, id_note),
+            NoteId::ReceivedNoteId(id_note) => wallet::get_received_memo_as_utf8(&self, id_note),
         }
     }
 
@@ -225,48 +237,53 @@ impl<P: consensus::Parameters> WalletRead for DataDB<P> {
         &self,
         block_height: BlockHeight,
     ) -> Result<Option<CommitmentTree<Node>>, Self::Error> {
-        wallet::get_commitment_tree(&self.wallet_db, block_height)
+        wallet::get_commitment_tree(&self, block_height)
     }
 
     fn get_witnesses(
         &self,
         block_height: BlockHeight,
     ) -> Result<Vec<(Self::NoteRef, IncrementalWitness<Node>)>, Self::Error> {
-        wallet::get_witnesses(&self.wallet_db, block_height)
+        wallet::get_witnesses(&self, block_height)
     }
 
     fn get_nullifiers(&self) -> Result<Vec<(AccountId, Nullifier)>, Self::Error> {
-        wallet::get_nullifiers(&self.wallet_db)
+        wallet::get_nullifiers(&self)
     }
 
-    fn get_spendable_notes(
+    fn get_spendable_sapling_notes(
         &self,
         account: AccountId,
         anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error> {
-        wallet::transact::get_spendable_notes(&self.wallet_db, account, anchor_height)
+        wallet::transact::get_spendable_sapling_notes(&self, account, anchor_height)
     }
 
-    fn select_spendable_notes(
+    fn select_spendable_sapling_notes(
         &self,
         account: AccountId,
         target_value: Amount,
         anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error> {
-        wallet::transact::select_spendable_notes(&self.wallet_db, account, target_value, anchor_height)
+        wallet::transact::select_spendable_sapling_notes(
+            &self,
+            account,
+            target_value,
+            anchor_height,
+        )
     }
 
-    fn get_confirmed_utxos_for_address(
+    fn get_spendable_transparent_utxos(
         &self,
         anchor_height: BlockHeight,
-        address: &TransparentAddress
+        address: &TransparentAddress,
     ) -> Result<Vec<WalletTransparentOutput>, Self::Error> {
-        chain::get_confirmed_utxos_for_address(&self.wallet_db.params, &self.block_db, anchor_height, address)
+        wallet::get_spendable_transparent_utxos(&self, anchor_height, address)
     }
 }
 
 pub struct DataConnStmtCache<'a, P> {
-    data_db: &'a DataDB<P>,
+    wallet_db: &'a WalletDB<P>,
     stmt_insert_block: Statement<'a>,
 
     stmt_insert_tx_meta: Statement<'a>,
@@ -276,8 +293,10 @@ pub struct DataConnStmtCache<'a, P> {
     stmt_update_tx_data: Statement<'a>,
     stmt_select_tx_ref: Statement<'a>,
 
-    stmt_mark_recived_note_spent: Statement<'a>,
+    stmt_mark_sapling_note_spent: Statement<'a>,
+    stmt_mark_transparent_utxo_spent: Statement<'a>,
 
+    stmt_insert_received_transparent_utxo: Statement<'a>,
     stmt_insert_received_note: Statement<'a>,
     stmt_update_received_note: Statement<'a>,
     stmt_select_received_note: Statement<'a>,
@@ -296,25 +315,25 @@ impl<'a, P: consensus::Parameters> WalletRead for DataConnStmtCache<'a, P> {
     type TxRef = i64;
 
     fn block_height_extrema(&self) -> Result<Option<(BlockHeight, BlockHeight)>, Self::Error> {
-        self.data_db.block_height_extrema()
+        self.wallet_db.block_height_extrema()
     }
 
     fn get_block_hash(&self, block_height: BlockHeight) -> Result<Option<BlockHash>, Self::Error> {
-        self.data_db.get_block_hash(block_height)
+        self.wallet_db.get_block_hash(block_height)
     }
 
     fn get_tx_height(&self, txid: TxId) -> Result<Option<BlockHeight>, Self::Error> {
-        self.data_db.get_tx_height(txid)
+        self.wallet_db.get_tx_height(txid)
     }
 
     fn get_extended_full_viewing_keys(
         &self,
     ) -> Result<HashMap<AccountId, ExtendedFullViewingKey>, Self::Error> {
-        self.data_db.get_extended_full_viewing_keys()
+        self.wallet_db.get_extended_full_viewing_keys()
     }
 
     fn get_address(&self, account: AccountId) -> Result<Option<PaymentAddress>, Self::Error> {
-        self.data_db.get_address(account)
+        self.wallet_db.get_address(account)
     }
 
     fn is_valid_account_extfvk(
@@ -322,7 +341,7 @@ impl<'a, P: consensus::Parameters> WalletRead for DataConnStmtCache<'a, P> {
         account: AccountId,
         extfvk: &ExtendedFullViewingKey,
     ) -> Result<bool, Self::Error> {
-        self.data_db.is_valid_account_extfvk(account, extfvk)
+        self.wallet_db.is_valid_account_extfvk(account, extfvk)
     }
 
     fn get_balance_at(
@@ -330,57 +349,57 @@ impl<'a, P: consensus::Parameters> WalletRead for DataConnStmtCache<'a, P> {
         account: AccountId,
         anchor_height: BlockHeight,
     ) -> Result<Amount, Self::Error> {
-        self.data_db.get_balance_at(account, anchor_height)
+        self.wallet_db.get_balance_at(account, anchor_height)
     }
 
-    fn get_memo_as_utf8(
-        &self,
-        id_note: Self::NoteRef,
-    ) -> Result<Option<String>, Self::Error> {
-        self.data_db.get_memo_as_utf8(id_note)
+    fn get_memo_as_utf8(&self, id_note: Self::NoteRef) -> Result<Option<String>, Self::Error> {
+        self.wallet_db.get_memo_as_utf8(id_note)
     }
 
     fn get_commitment_tree(
         &self,
         block_height: BlockHeight,
     ) -> Result<Option<CommitmentTree<Node>>, Self::Error> {
-        self.data_db.get_commitment_tree(block_height)
+        self.wallet_db.get_commitment_tree(block_height)
     }
 
     fn get_witnesses(
         &self,
         block_height: BlockHeight,
     ) -> Result<Vec<(Self::NoteRef, IncrementalWitness<Node>)>, Self::Error> {
-        self.data_db.get_witnesses(block_height)
+        self.wallet_db.get_witnesses(block_height)
     }
 
     fn get_nullifiers(&self) -> Result<Vec<(AccountId, Nullifier)>, Self::Error> {
-        self.data_db.get_nullifiers()
+        self.wallet_db.get_nullifiers()
     }
 
-    fn get_spendable_notes(
+    fn get_spendable_sapling_notes(
         &self,
         account: AccountId,
         anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error> {
-        self.data_db.get_spendable_notes(account, anchor_height)
+        self.wallet_db
+            .get_spendable_sapling_notes(account, anchor_height)
     }
 
-    fn select_spendable_notes(
+    fn select_spendable_sapling_notes(
         &self,
         account: AccountId,
         target_value: Amount,
         anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error> {
-        self.data_db.select_spendable_notes(account, target_value, anchor_height)
+        self.wallet_db
+            .select_spendable_sapling_notes(account, target_value, anchor_height)
     }
 
-    fn get_confirmed_utxos_for_address(
+    fn get_spendable_transparent_utxos(
         &self,
         anchor_height: BlockHeight,
-        address: &TransparentAddress
+        address: &TransparentAddress,
     ) -> Result<Vec<WalletTransparentOutput>, Self::Error> {
-        self.data_db.get_confirmed_utxos_for_address(anchor_height, address)
+        self.wallet_db
+            .get_spendable_transparent_utxos(anchor_height, address)
     }
 }
 
@@ -389,14 +408,14 @@ impl<'a, P: consensus::Parameters> WalletWrite for DataConnStmtCache<'a, P> {
     where
         F: FnOnce(&mut Self) -> Result<A, Self::Error>,
     {
-        self.data_db.wallet_db.conn.execute("BEGIN IMMEDIATE", NO_PARAMS)?;
+        self.wallet_db.conn.execute("BEGIN IMMEDIATE", NO_PARAMS)?;
         match f(self) {
             Ok(result) => {
-                self.data_db.wallet_db.conn.execute("COMMIT", NO_PARAMS)?;
+                self.wallet_db.conn.execute("COMMIT", NO_PARAMS)?;
                 Ok(result)
             }
             Err(error) => {
-                match self.data_db.wallet_db.conn.execute("ROLLBACK", NO_PARAMS) {
+                match self.wallet_db.conn.execute("ROLLBACK", NO_PARAMS) {
                     Ok(_) => Err(error),
                     Err(e) =>
                         // Panicking here is probably the right thing to do, because it
@@ -422,7 +441,7 @@ impl<'a, P: consensus::Parameters> WalletWrite for DataConnStmtCache<'a, P> {
     }
 
     fn rewind_to_height(&mut self, block_height: BlockHeight) -> Result<(), Self::Error> {
-        wallet::rewind_to_height(&self.data_db.wallet_db, block_height)
+        wallet::rewind_to_height(&self.wallet_db, block_height)
     }
 
     fn put_tx_meta(
@@ -441,8 +460,20 @@ impl<'a, P: consensus::Parameters> WalletWrite for DataConnStmtCache<'a, P> {
         wallet::put_tx_data(self, tx, created_at)
     }
 
-    fn mark_spent(&mut self, tx_ref: Self::TxRef, nf: &Nullifier) -> Result<(), Self::Error> {
-        wallet::mark_spent(self, tx_ref, nf)
+    fn mark_transparent_utxo_spent(
+        &mut self,
+        tx_ref: Self::TxRef,
+        outpoint: &OutPoint,
+    ) -> Result<(), Self::Error> {
+        wallet::mark_transparent_utxo_spent(self, tx_ref, outpoint)
+    }
+
+    fn mark_sapling_note_spent(
+        &mut self,
+        tx_ref: Self::TxRef,
+        nf: &Nullifier,
+    ) -> Result<(), Self::Error> {
+        wallet::mark_sapling_note_spent(self, tx_ref, nf)
     }
 
     // Assumptions:
