@@ -294,7 +294,7 @@ mod tests {
     use zcash_primitives::consensus::MAIN_NETWORK;
 
     use crate::encoding::AddressCodec;
-    use crate::keys::{derive_secret_key_from_seed, derive_transparent_address_from_secret_key, derive_transparent_address_from_secret_key_wif, ExtendedPrivKey, Wifable};
+    use crate::keys::{derive_secret_key_from_seed, derive_transparent_address_from_secret_key, ExtendedPrivKey, Wifable};
     use crate::keys::from_hex;
 
     use super::spending_key;
@@ -332,8 +332,9 @@ mod tests {
     #[test]
     fn sk_wif_to_taddr() {
         let sk_wif = "L4BvDC33yLjMRxipZvdiUmdYeRfZmR8viziwsVwe72zJdGbiJPv2";
-        let taddr = derive_transparent_address_from_secret_key_wif(sk_wif);
+        let sk = SecretKey::from_wif(&sk_wif).expect("invalid wif");
+        let taddr = derive_transparent_address_from_secret_key(sk);
 
-        assert_eq!(taddr.unwrap().encode(&MAIN_NETWORK), "t1PKtYdJJHhc3Pxowmznkg7vdTwnhEsCvR4".to_string());
+        assert_eq!(taddr.encode(&MAIN_NETWORK), "t1PKtYdJJHhc3Pxowmznkg7vdTwnhEsCvR4".to_string());
     }
 }
