@@ -264,17 +264,6 @@ pub fn derive_transparent_address_from_secret_key(
     TransparentAddress::PublicKey(*hash160.finalize().as_ref())
 }
 
-pub fn derive_transparent_address_from_secret_key_wif(
-    secret_key_wif: &str,
-) -> Result<TransparentAddress, Error> {
-    match SecretKey::from_wif(&secret_key_wif) {
-        Ok(sk) => Ok(derive_transparent_address_from_secret_key(sk)),
-        Err(e) => {
-            return Err(Error::InvalidSecretKeyWif);
-        },
-    }
-}
-
 pub fn derive_secret_key_from_seed(
     seed: &[u8],
     coin_type: u32,
