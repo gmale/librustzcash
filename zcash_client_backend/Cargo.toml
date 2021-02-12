@@ -12,17 +12,21 @@ license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [dependencies]
+base58 = "0.1"
 bech32 = "0.7"
 bls12_381 = "0.3.1"
 bs58 = { version = "0.3", features = ["check"] }
 base64 = "0.12.3"
+failure = "0.1.8"
 ff = "0.8"
 group = "0.8"
 hex = "0.4"
 jubjub = "0.5.1"
+log = "0.4"
 nom = "5.1.2"
 protobuf = "2.20"
 rand_core = "0.5.1"
+ring = "0.16"
 ripemd160 = { version = "0.9.1", optional = true }
 secp256k1 = { version = "0.19", optional = true }
 sha2 = "0.9"
