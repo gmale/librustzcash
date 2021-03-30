@@ -50,8 +50,9 @@ use zcash_primitives::{
 };
 
 use zcash_client_backend::{
+    address::RecipientAddress,
     data_api::{
-        BlockSource, PrunedBlock, ReceivedTransaction, SentTransaction, WalletRead, WalletWrite,
+        BlockSource, DecryptedTransaction, PrunedBlock, SentTransaction, WalletRead, WalletWrite,
     },
     encoding::encode_payment_address,
     proto::compact_formats::CompactBlock,
@@ -514,18 +515,59 @@ impl<'a, P: consensus::Parameters> WalletWrite for DataConnStmtCache<'a, P> {
         })
     }
 
-    fn store_received_tx(
+    fn store_decrypted_tx(
         &mut self,
-        received_tx: &ReceivedTransaction,
+        d_tx: &DecryptedTransaction,
     ) -> Result<Self::TxRef, Self::Error> {
         self.transactionally(|up| {
-            let tx_ref = wallet::put_tx_data(up, received_tx.tx, None)?;
+            let tx_ref = wallet::put_tx_data(up, d_tx.tx, None)?;
 
-            for output in received_tx.outputs {
+            let mut spending_account_id: Option<AccountId> = None;
+            for output in d_tx.sapling_outputs {
                 if output.outgoing {
-                    wallet::put_sent_note(up, output, tx_ref)?;
+                    wallet::put_sent_note(
+                        up,
+                        tx_ref,
+                        output.index,
+                        output.account,
+                        RecipientAddress::Shielded(output.to.clone()),
+                        Amount::from_u64(output.note.value)
+                            .map_err(|_| SqliteClientError::CorruptedData("Note value invalid.".to_string()))?,
+                        Some(&output.memo),
+                    )?;
                 } else {
+                    match spending_account_id {
+                        Some(id) =>
+                            if id != output.account {
+                                panic!("Unable to determine a unique account identifier for z->t spend.");
+                            }
+                        None => {
+                            spending_account_id = Some(output.account);
+                        }
+                    }
+
                     wallet::put_received_note(up, output, tx_ref)?;
+                }
+            }
+
+            // store received z->t transactions in the same way they would be stored by
+            // create_spend_to_address If there are any of our shielded inputs, we interpret this
+            // as our z->t tx and store the vouts as our sent notes.
+            // FIXME this is a weird heuristic that is bound to trip us up somewhere.
+            if d_tx.sapling_outputs.iter().any(|output| !output.outgoing) {
+                for account_id in spending_account_id {
+                    for (i, txout) in d_tx.tx.vout.iter().enumerate() {
+                        // FIXME: We shouldn't be confusing notes and transparent outputs.
+                        wallet::put_sent_note(
+                            up,
+                            tx_ref,
+                            i,
+                            account_id,
+                            RecipientAddress::Transparent(txout.script_pubkey.address().unwrap()),
+                            txout.value,
+                            None,
+                        )?;
+                    }
                 }
             }
 
